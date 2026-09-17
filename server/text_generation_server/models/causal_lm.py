@@ -521,6 +521,9 @@ class CausalLM(Model):
         elif hasattr(torch, "xpu") and torch.xpu.is_available():
             device = torch.device(f"xpu:{rank}")
             dtype = default_dtype if dtype is None else dtype
+        elif SYSTEM == "npu":
+            device = torch.device(f"npu:{rank}")
+            dtype = default_dtype if dtype is None else dtype
         elif SYSTEM == "ipex":
             device = torch.device("cpu")
             # Float16 doesn't exist on target.
@@ -602,6 +605,10 @@ class CausalLM(Model):
             device = torch.device("xpu")
             device_count = torch.xpu.device_count()
             dtype = torch.float16 if dtype is None else dtype
+        elif SYSTEM == "npu":
+            device = torch.device("npu")
+            device_count = torch.npu.device_count()
+            dtype = torch.bfloat16 if dtype is None else dtype
         else:
             if quantize:
                 raise ValueError("quantization is not available on CPU")

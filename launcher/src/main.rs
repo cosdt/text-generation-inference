@@ -129,6 +129,17 @@ fn get_config(
 }
 
 fn resolve_attention(config: &Option<Config>, lora_adapters: &Option<String>) -> (String, String) {
+    if gpu::is_npu() {
+        // Ascend NPU: use the torch-npu attention implementation.
+        // Prefix caching is not supported yet on npu.
+        let attention = std::env::var("ATTENTION").unwrap_or("flashdecoding-npu".to_string());
+        let prefix_caching = std::env::var("PREFIX_CACHING").unwrap_or("0".to_string());
+        tracing::info!(
+            "Using npu attention implementation {attention} - Prefix caching {prefix_caching}"
+        );
+        return (prefix_caching, attention);
+    }
+
     let compute_capability = gpu::get_cuda_capability();
     let mut prefix_caching: Option<String> = std::env::var("PREFIX_CACHING").ok();
     let mut attention: Option<String> = std::env::var("ATTENTION").ok();
@@ -1047,7 +1058,12 @@ fn shard_manager(
     envs.push(("WORLD_SIZE".into(), world_size.to_string().into()));
     envs.push(("MASTER_ADDR".into(), master_addr.into()));
     envs.push(("MASTER_PORT".into(), master_port.to_string().into()));
-    envs.push(("TORCH_NCCL_AVOID_RECORD_STREAMS".into(), "1".into()));
+    if gpu::is_npu() {
+        // Ascend NPU uses the HCCL distributed backend.
+        envs.push(("HCCL_CONNECT_TIMEOUT".into(), "1800".into()));
+    } else {
+        envs.push(("TORCH_NCCL_AVOID_RECORD_STREAMS".into(), "1".into()));
+    }
 
     // CUDA memory fraction
     envs.push((
@@ -1284,7 +1300,15 @@ fn num_cuda_devices() -> Option<usize> {
                     devices
                 }
             }
-            Err(_) => env::var("ZE_AFFINITY_MASK").ok()?,
+            Err(_) => match env::var("ASCEND_VISIBLE_DEVICES") {
+                // Ascend NPU: count devices via torch-npu when the env var is
+                // not set (all devices are visible by default).
+                Ok(devices) if !devices.trim().is_empty() => devices,
+                _ => match gpu::get_npu_device_count() {
+                    Some(count) if count > 0 => return Some(count),
+                    _ => env::var("ZE_AFFINITY_MASK").ok()?,
+                },
+            },
         },
     };
     let n_devices = devices.split(',').count();
@@ -1700,6 +1724,8 @@ enum Gpu {
     H100,
     A100,
     H200,
+    Ascend910B,
+    Ascend310P,
     Unknown(String),
 }
 
@@ -1727,6 +1753,9 @@ impl From<&str> for Gpu {
             "nvidia-a100-80gb-pcie" => Gpu::A100,
             "nvidia-a100" => Gpu::A100,
             "nvidia-h200" => Gpu::H200,
+            // Ascend NPU chips (names as reported by `npu-smi info -t board`)
+            "ascend-910b4" | "ascend-910b" => Gpu::Ascend910B,
+            "ascend-310p" => Gpu::Ascend310P,
             card => Gpu::Unknown(card.to_string()),
         }
     }
@@ -1745,6 +1774,8 @@ impl std::fmt::Display for Gpu {
             Gpu::H100 => write!(f, "nvidia-h100-80fb-hbm3"),
             Gpu::A100 => write!(f, "nvidia-a100-sxm4-80gb"),
             Gpu::H200 => write!(f, "nvidia-h200"),
+            Gpu::Ascend910B => write!(f, "ascend-910b"),
+            Gpu::Ascend310P => write!(f, "ascend-310p"),
             Gpu::Unknown(card) => write!(f, "{}", card),
         }
     }
@@ -1776,6 +1807,11 @@ impl ComputeType {
             Gpu::H100 => Some(900 * 10u64.pow(12)),
             // https://www.nvidia.com/en-us/data-center/h200/
             Gpu::H200 => Some(989 * 10u64.pow(12)),
+            // https://www.hiascend.com/hardware/ai-server
+            // Ascend 910B: 376 TFLOPS FP16 (also applies to the 910B4 variant)
+            Gpu::Ascend910B => Some(376 * 10u64.pow(12)),
+            // Ascend 310P: 25 TFLOPS FP16
+            Gpu::Ascend310P => Some(25 * 10u64.pow(12)),
             Gpu::Unknown(card) => {
                 tracing::warn!("Unkown compute for card {card}");
                 None
@@ -1785,21 +1821,35 @@ impl ComputeType {
     }
 
     fn vram(&self, memory_fraction: f32) -> Option<usize> {
-        let output = Command::new("nvidia-smi")
-            .args(["--query-gpu=memory.total", "--format=csv"])
-            .output()
-            .ok()?;
-        let output = String::from_utf8(output.stdout).ok()?;
-        let fullname = output.split('\n').nth(1)?;
-        let mut tokens = fullname.split(' ');
-        let amount = tokens.next()?;
-        let unit = tokens.next()?;
-        if unit != "MiB" {
-            tracing::warn!("Unexpected memory unit {unit}, expected MiB");
-            return None;
-        }
+        let (amount, unit) = if gpu::is_npu() {
+            // Ascend NPU: parse the HBM capacity from npu-smi.
+            let output = Command::new("npu-smi")
+                .args(["info", "-t", "memory", "-i", "0", "-c", "0"])
+                .output()
+                .ok()?;
+            let output = String::from_utf8(output.stdout).ok()?;
+            let line = output.lines().find(|l| l.contains("HBM Capacity"))?;
+            let mut tokens = line.split(':').nth(1)?.split_whitespace();
+            (tokens.next()?.to_string(), tokens.next()?.to_string())
+        } else {
+            let output = Command::new("nvidia-smi")
+                .args(["--query-gpu=memory.total", "--format=csv"])
+                .output()
+                .ok()?;
+            let output = String::from_utf8(output.stdout).ok()?;
+            let fullname = output.split('\n').nth(1)?;
+            let mut tokens = fullname.split(' ');
+            (tokens.next()?.to_string(), tokens.next()?.to_string())
+        };
         let amount: usize = amount.parse().ok()?;
-        let amount = amount * 2usize.pow(20);
+        let amount = match unit.as_str() {
+            "MiB" => amount * 2usize.pow(20),
+            "MB" => amount * 10usize.pow(6),
+            unit => {
+                tracing::warn!("Unexpected memory unit {unit}, expected MiB or MB");
+                return None;
+            }
+        };
         let wiggle_room: f32 = env::var("TGI_WIGGLE_ROOM")
             .ok()
             .and_then(|wiggle| wiggle.parse().ok())
@@ -1817,13 +1867,25 @@ impl From<ComputeType> for OsString {
 }
 
 fn compute_type(count: usize) -> Option<ComputeType> {
-    let output = Command::new("nvidia-smi")
-        .args(["--query-gpu=gpu_name", "--format=csv"])
-        .output()
-        .ok()?;
-    let output = String::from_utf8(output.stdout).ok()?;
-    let fullname = output.split('\n').nth(1)?;
-    let cardname = fullname.replace(' ', "-").to_lowercase();
+    let cardname = if gpu::is_npu() {
+        // Ascend NPU: read the chip name of the first device from npu-smi.
+        let output = Command::new("npu-smi")
+            .args(["info", "-t", "board", "-i", "0", "-c", "0"])
+            .output()
+            .ok()?;
+        let output = String::from_utf8(output.stdout).ok()?;
+        let line = output.lines().find(|l| l.contains("Chip Name"))?;
+        let chip_name = line.split(':').nth(1)?.trim();
+        format!("ascend-{}", chip_name.to_lowercase())
+    } else {
+        let output = Command::new("nvidia-smi")
+            .args(["--query-gpu=gpu_name", "--format=csv"])
+            .output()
+            .ok()?;
+        let output = String::from_utf8(output.stdout).ok()?;
+        let fullname = output.split('\n').nth(1)?;
+        fullname.replace(' ', "-").to_lowercase()
+    };
     let card = (&*cardname).into();
     Some(ComputeType { count, card })
 }
@@ -2178,9 +2240,14 @@ fn main() -> Result<(), LauncherError> {
             vec![]
         }
         _ => {
-            let cuda_graphs = vec![1, 2, 4, 8, 16, 32];
-            tracing::info!("Using default cuda graphs {cuda_graphs:?}");
-            cuda_graphs
+            if gpu::is_npu() {
+                tracing::info!("Cuda graphs are not supported on Ascend NPU, deactivating them");
+                vec![]
+            } else {
+                let cuda_graphs = vec![1, 2, 4, 8, 16, 32];
+                tracing::info!("Using default cuda graphs {cuda_graphs:?}");
+                cuda_graphs
+            }
         }
     };
 

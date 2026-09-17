@@ -135,7 +135,9 @@ def tgi_flash_attention_forward(
             window_size_left=sliding_window,
         )
 
-    attn_output = attn_output.view(-1, num_heads * head_dim)
+    # `reshape` instead of `view`: attention outputs can be non-contiguous on
+    # some platforms (e.g. Ascend NPU einsum / masked indexing outputs).
+    attn_output = attn_output.reshape(-1, num_heads * head_dim)
 
     return attn_output, None
 

@@ -89,7 +89,7 @@ class KVCache:
         else:
             x = BLOCK_SIZE // element_size
 
-        if ATTENTION in {"flashdecoding", "flashinfer"} or (
+        if ATTENTION in {"flashdecoding", "flashdecoding-npu", "flashinfer"} or (
             ATTENTION == "flashdecoding-ipex" and device.type == "xpu"
         ):
             self.kv_cache = (
@@ -197,7 +197,7 @@ class KVCache:
                     scalar=True,
                 )[0]
 
-        if ATTENTION in {"flashdecoding", "flashinfer"}:
+        if ATTENTION in {"flashdecoding", "flashdecoding-npu", "flashinfer"}:
             key = key.to(key_cache.dtype)
             value = value.to(value_cache.dtype)
             if key_cache.dtype in {torch.float8_e4m3fn, torch.float8_e5m2}:
@@ -300,6 +300,14 @@ def paged_reshape_and_cache(
             kv_cache_dtype=kv_cache_dtype,
             k_scale=k_scale,
             v_scale=v_scale,
+        )
+    elif SYSTEM == "npu":
+        # Plain torch assignment; the v2 `paged` attention path on NPU is
+        # not optimized yet. `flashdecoding-npu` takes the index_put path
+        # in `KVCache.store` instead and does not reach this function.
+        key_cache.view(-1, key_cache.shape[-2], key_cache.shape[-1])[slots] = key
+        value_cache.view(-1, value_cache.shape[-2], value_cache.shape[-1])[slots] = (
+            value
         )
     else:
         raise NotImplementedError(

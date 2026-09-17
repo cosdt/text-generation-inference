@@ -76,7 +76,9 @@ def tgi_flash_attention_forward(
             window_size_left=sliding_window,
         )
 
-    attn_output = attn_output.view(-1, num_heads * head_dim)
+    # `reshape` instead of `view`: attention outputs can be non-contiguous on
+    # some platforms (e.g. Ascend NPU einsum / masked indexing outputs).
+    attn_output = attn_output.reshape(-1, num_heads * head_dim)
 
     return attn_output, None
 
@@ -114,6 +116,9 @@ class TransformersFlashCausalLM(FlashCausalLM):
 
         if torch.cuda.is_available():
             device = torch.device(f"cuda:{rank}")
+            dtype = default_dtype if dtype is None else dtype
+        elif SYSTEM == "npu":
+            device = torch.device(f"npu:{rank}")
             dtype = default_dtype if dtype is None else dtype
         elif SYSTEM == "ipex":
             if hasattr(torch, "xpu") and torch.xpu.is_available():

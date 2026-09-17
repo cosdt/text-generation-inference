@@ -43,8 +43,14 @@ install-cuda: install-server install-flash-attention-v2-cuda install-flash-atten
 
 install-rocm: install-server install-flash-attention-v2-rocm  install-vllm-rocm
 
+install-ascend: install-server
+	# torch-npu (Ascend) kernels are provided by the CANN image, nothing to
+	# build. Pin the `kernels` build backend to the version with `kernels.lockfile`.
+	uv pip install "kernels==0.5.0"
+
 export-requirements:
 	uv pip compile pyproject.toml --extra gen -o requirements_gen.txt --python-version 3.11
 	uv pip compile pyproject.toml --extra bnb --extra accelerate --extra compressed-tensors --extra quantize --extra peft --extra outlines -o requirements_cuda.txt --python-version 3.11
 	uv pip compile pyproject.toml --extra accelerate --extra compressed-tensors --extra quantize --extra peft --extra outlines -o requirements_intel.txt --python-version 3.11
 	uv pip compile pyproject.toml --extra accelerate --extra compressed-tensors --extra quantize --extra peft --extra outlines -o requirements_rocm.txt --python-version 3.11
+	uv pip compile pyproject.toml --extra accelerate --extra compressed-tensors --extra quantize --extra peft --extra outlines -o requirements_ascend.txt --python-version 3.11

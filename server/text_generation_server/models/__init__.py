@@ -198,7 +198,9 @@ except ImportError as e:
 if MAMBA_AVAILABLE:
     __all__.append(Mamba)
 
-FLASH_TRANSFORMERS_BACKEND = torch.cuda.is_available() or SYSTEM == "ipex"
+FLASH_TRANSFORMERS_BACKEND = (
+    torch.cuda.is_available() or SYSTEM == "ipex" or SYSTEM == "npu"
+)
 
 try:
     from text_generation_server.models.transformers_flash_causal_lm import (
@@ -461,6 +463,12 @@ def get_model(
         else:
             log_master(logger.warning, f"Unknown quantization method {method}")
 
+    if SYSTEM == "npu" and quantize is not None:
+        raise RuntimeError(
+            f"Quantization (`{quantize}`) is not supported on Ascend NPU yet. "
+            "Please launch TGI without `--quantize` on npu."
+        )
+
     if dtype is None:
         if quantize in ["awq", "exl2", "gptq", "marlin"]:
             if SYSTEM == "ipex" and not (
@@ -470,6 +478,9 @@ def get_model(
             else:
                 # These quantizers only work with float16 params.
                 dtype = torch.float16
+        elif SYSTEM == "npu":
+            # bf16 has the best performance on Ascend 910B.
+            dtype = torch.bfloat16
         else:
             # Keep it as default for now and let
             # every model resolve their own default dtype.

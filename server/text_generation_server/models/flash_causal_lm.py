@@ -1218,6 +1218,9 @@ class FlashCausalLM(Model):
         if torch.cuda.is_available():
             device = torch.device(f"cuda:{rank}")
             dtype = default_dtype if dtype is None else dtype
+        elif SYSTEM == "npu":
+            device = torch.device(f"npu:{rank}")
+            dtype = default_dtype if dtype is None else dtype
         elif SYSTEM == "ipex":
             if hasattr(torch, "xpu") and torch.xpu.is_available():
                 device = torch.device(f"xpu:{rank}")

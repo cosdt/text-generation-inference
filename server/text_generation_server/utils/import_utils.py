@@ -10,6 +10,15 @@ def is_ipex_available():
     return importlib.util.find_spec("intel_extension_for_pytorch") is not None
 
 
+def is_torch_npu_available():
+    try:
+        import torch_npu  # noqa: F401
+
+        return torch.npu.is_available()
+    except (ImportError, AttributeError):
+        return False
+
+
 def get_cuda_free_memory(device, memory_fraction):
     total_free_memory, _ = torch.cuda.mem_get_info(device)
     total_gpu_memory = torch.cuda.get_device_properties(device).total_memory
@@ -32,6 +41,16 @@ def get_cpu_free_memory(device, memory_fraction):
 
     mem = psutil.virtual_memory()
     free_memory = int(mem.available * 0.95 / WORLD_SIZE)
+    return free_memory
+
+
+def get_npu_free_memory(device, memory_fraction):
+    import torch_npu  # noqa: F401
+
+    total_free_memory, total_npu_memory = torch.npu.mem_get_info(device)
+    free_memory = max(
+        0, int(total_free_memory - (1 - memory_fraction) * total_npu_memory)
+    )
     return free_memory
 
 
@@ -67,6 +86,11 @@ elif hasattr(torch, "xpu") and torch.xpu.is_available():
     empty_cache = torch.xpu.empty_cache
     synchronize = torch.xpu.synchronize
     get_free_memory = get_xpu_free_memory
+elif is_torch_npu_available():
+    SYSTEM = "npu"
+    empty_cache = torch.npu.empty_cache
+    synchronize = torch.npu.synchronize
+    get_free_memory = get_npu_free_memory
 else:
     SYSTEM = "cpu"
 

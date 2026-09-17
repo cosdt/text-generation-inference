@@ -9,6 +9,7 @@ pub(crate) struct Env {
     nvidia_env: String,
     xpu_env: String,
     hpu_env: String,
+    npu_env: String,
 }
 
 impl Env {
@@ -16,11 +17,13 @@ impl Env {
         let nvidia_env = nvidia_smi();
         let xpu_env = xpu_smi();
         let hpu_env = hl_smi();
+        let npu_env = npu_smi();
 
         Self {
             nvidia_env: nvidia_env.unwrap_or("N/A".to_string()),
             xpu_env: xpu_env.unwrap_or("N/A".to_string()),
             hpu_env: hpu_env.unwrap_or("N/A".to_string()),
+            npu_env: npu_env.unwrap_or("N/A".to_string()),
             cargo_target: env!("VERGEN_CARGO_TARGET_TRIPLE"),
             cargo_version: env!("VERGEN_RUSTC_SEMVER"),
             git_sha: option_env!("VERGEN_GIT_SHA").unwrap_or("N/A"),
@@ -40,6 +43,7 @@ impl fmt::Display for Env {
         writeln!(f, "nvidia-smi:\n{}", self.nvidia_env)?;
         writeln!(f, "xpu-smi:\n{}", self.xpu_env)?;
         writeln!(f, "hpu-smi:\n{}", self.hpu_env)?;
+        writeln!(f, "npu-smi:\n{}", self.npu_env)?;
 
         Ok(())
     }
@@ -63,5 +67,12 @@ fn hl_smi() -> Option<String> {
     let output = Command::new("hl-smi").output().ok()?;
     let hl_smi = String::from_utf8(output.stdout).ok()?;
     let output = hl_smi.replace('\n', "\n   ");
+    Some(output.trim().to_string())
+}
+
+fn npu_smi() -> Option<String> {
+    let output = Command::new("npu-smi").arg("info").output().ok()?;
+    let npu_smi = String::from_utf8(output.stdout).ok()?;
+    let output = npu_smi.replace('\n', "\n   ");
     Some(output.trim().to_string())
 }

@@ -1,7 +1,27 @@
 import torch
-import triton
 
-import triton.language as tl
+try:
+    import triton
+
+    import triton.language as tl
+
+    _TRITON_IMPORTED = True
+except ImportError:
+    # Triton is only used for CUDA-optimized indexing kernels, which are
+    # gated by `has_triton()` at every call site. Provide a stub so the
+    # decorated kernels below are defined as plain (never called) functions.
+    class _DummyTriton:
+        @staticmethod
+        def jit(fn):
+            return fn
+
+        @staticmethod
+        def cdiv(a, b):
+            return (a + b - 1) // b
+
+    triton = _DummyTriton()
+    tl = None
+    _TRITON_IMPORTED = False
 
 from loguru import logger
 from typing import List, Optional

@@ -58,6 +58,16 @@ def initialize_torch_distributed():
         options = ProcessGroupNCCL.Options()
         options.is_high_priority_stream = True
         options._timeout = timedelta(seconds=120)
+    elif SYSTEM == "npu":
+        import torch_npu  # noqa: F401
+
+        assert WORLD_SIZE <= torch.npu.device_count(), "Each process is one npu"
+        device = RANK % torch.npu.device_count()
+        torch.npu.set_device(device)
+        if hasattr(torch.npu, "set_memory_fraction"):
+            torch.npu.set_memory_fraction(MEMORY_FRACTION)
+        backend = "hccl"
+        options = None
     else:
         backend = "gloo"
         options = None
@@ -70,7 +80,14 @@ def initialize_torch_distributed():
 
         if not torch.distributed.is_initialized():
             # Call the init process.
-            if SYSTEM == "ipex":
+            if SYSTEM == "npu":
+                torch.distributed.init_process_group(
+                    backend="hccl",
+                    world_size=WORLD_SIZE,
+                    rank=RANK,
+                    timeout=timedelta(seconds=1800),
+                )
+            elif SYSTEM == "ipex":
                 import intel_extension_for_pytorch as ipex
 
                 if torch.xpu.is_available():
