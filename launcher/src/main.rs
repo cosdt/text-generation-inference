@@ -1055,6 +1055,10 @@ fn shard_manager(
 
     // Torch Distributed Env vars
     envs.push(("RANK".into(), rank.to_string().into()));
+    // `LOCAL_RANK` is required by the transformers native tensor parallelism
+    // path (`tp_plan="auto"`) used when world_size > 1. TGI maps one process
+    // per device (rank == local device index), so LOCAL_RANK == RANK here.
+    envs.push(("LOCAL_RANK".into(), rank.to_string().into()));
     envs.push(("WORLD_SIZE".into(), world_size.to_string().into()));
     envs.push(("MASTER_ADDR".into(), master_addr.into()));
     envs.push(("MASTER_PORT".into(), master_port.to_string().into()));
