@@ -20,13 +20,17 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
 
+# Python dev headers for PyO3 + protobuf compiler for the gRPC codegen.
+# apt resolves the host architecture itself (Ascend 910B hosts are aarch64,
+# the previous x86_64 protoc download did not work there).
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    python3.11-dev
-RUN PROTOC_ZIP=protoc-21.12-linux-x86_64.zip && \
-    curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v21.12/$PROTOC_ZIP && \
-    unzip -o $PROTOC_ZIP -d /usr/local bin/protoc && \
-    unzip -o $PROTOC_ZIP -d /usr/local 'include/*' && \
-    rm -f $PROTOC_ZIP
+    python3.12-dev \
+    protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
+# Keep the embedded libpython in sync with the runtime image (Python 3.12).
+ENV PYO3_PYTHON=/usr/bin/python3.12 \
+    PROTOC=/usr/bin/protoc
 
 COPY --from=planner /usr/src/recipe.json recipe.json
 RUN cargo chef cook --profile release-opt --recipe-path recipe.json
@@ -42,16 +46,21 @@ COPY benchmark benchmark
 COPY router router
 COPY backends backends
 COPY launcher launcher
-RUN cargo build --profile release-opt --frozen
+# Only the launcher + v3 router (+ benchmark) are used on NPU; v2 / trtllm /
+# llamacpp backends are not part of the validated aarch64 build set.
+RUN cargo build --profile release-opt --frozen \
+    -p text-generation-launcher -p text-generation-router-v3 -p text-generation-benchmark
 
 
 # Text Generation Inference base image for Ascend NPU
 #
-# Pick a tag that matches the target hardware and CANN/torch-npu versions:
-#   - Atlas 800I A2 (910B): ascendai/cann:8.1.rc1-910b-ubuntu22.04-py3.11
-#   - Atlas 300I Duo (310P): ascendai/cann:8.1.rc1-310p-ubuntu22.04-py3.11
+# Defaults to the Huawei Cloud SWR image validated with this stack
+# (CANN 9.1.0, Python 3.12). Pick a tag that matches the target hardware
+# and CANN version, e.g. an ascendai/cann image from Docker Hub:
+#   docker build -f Dockerfile_ascend \
+#     --build-arg CANN_IMAGE=ascendai/cann:<tag>-910b-ubuntu22.04-py3.12 .
 # See https://ascendhub.huawei.com/#/index for available tags.
-ARG CANN_IMAGE=ascendai/cann:8.1.rc1-910b-ubuntu22.04-py3.11
+ARG CANN_IMAGE=swr.cn-south-1.myhuaweicloud.com/ascendhub/cann:9.1.0-910b-ubuntu22.04-py3.12
 FROM ${CANN_IMAGE} AS ascend
 
 USER root
@@ -62,19 +71,30 @@ ENV HF_HOME=/data \
 
 WORKDIR /usr/src
 
+# torch / torch_npu must be installed from the Ascend wheel index BEFORE the
+# server install: pyproject's uv sources resolve torch to the CUDA (cu128)
+# index by default, which has no aarch64 wheels. Same platform-torch-first
+# pattern as Dockerfile_intel.
+ARG TORCH_VERSION=2.9.0
+ARG TORCH_NPU_VERSION=2.9.0.post2
+RUN pip install -U pip uv && \
+    uv pip install --no-cache-dir \
+        --index-url https://repo.huaweicloud.com/ascend/repos/pypi/simple \
+        "torch==${TORCH_VERSION}" "torch_npu==${TORCH_NPU_VERSION}"
+
 # Install server.
 # NOTE: `kernels==0.5.0` must be installed before the editable install: the
 # package build backend relies on `kernels.lockfile` which was removed from
-# newer `kernels` releases.
+# newer `kernels` releases (--no-build-isolation makes the install use the
+# pinned one instead of re-resolving it).
 COPY proto proto
 COPY server server
 COPY server/Makefile server/Makefile
 ENV UV_SYSTEM_PYTHON=1
 RUN cd server && \
     make gen-server && \
-    pip install -U pip uv && \
     uv pip install "kernels==0.5.0" --no-cache-dir && \
-    uv pip install -e ".[accelerate, compressed-tensors, peft, outlines]" --no-cache-dir
+    uv pip install --no-build-isolation -e ".[accelerate, compressed-tensors, peft, outlines]" --no-cache-dir
 
 # HCCL distributed backend settings
 ENV HCCL_CONNECT_TIMEOUT=1800
@@ -92,5 +112,7 @@ ENV ATTENTION=flashdecoding-npu
 ENV PREFIX_CACHING=0
 ENV PREFILL_CHUNKING=1
 ENV CUDA_GRAPHS=0
+# Avoid NPU allocator fragmentation during tensor-parallel weight loading.
+ENV PYTORCH_NPU_ALLOC_CONF=max_split_size_mb:256
 ENTRYPOINT ["text-generation-launcher"]
 CMD ["--json-output"]

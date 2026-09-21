@@ -1,0 +1,7 @@
+# Pins that anchor `uv pip compile` to the stack validated on Ascend 910B
+# (the quick-start guard CI runs exactly this stack). Used by
+# `make export-requirements` when regenerating requirements_ascend.txt.
+torch==2.9.0
+kernels==0.5.0
+transformers==4.57.6
+accelerate==1.15.0

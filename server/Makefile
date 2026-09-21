@@ -43,14 +43,24 @@ install-cuda: install-server install-flash-attention-v2-cuda install-flash-atten
 
 install-rocm: install-server install-flash-attention-v2-rocm  install-vllm-rocm
 
-install-ascend: install-server
-	# torch-npu (Ascend) kernels are provided by the CANN image, nothing to
-	# build. Pin the `kernels` build backend to the version with `kernels.lockfile`.
+install-ascend: gen-server
+	# torch / torch_npu must be pre-installed from the Ascend wheel index
+	# (https://repo.huaweicloud.com/ascend/repos/pypi/simple) before running
+	# this target: requirements_ascend.txt deliberately excludes the torch
+	# family so the CUDA (cu128) wheels are never pulled in (no aarch64
+	# builds, wrong backend for NPU). Pin the `kernels` build backend to the
+	# version with `kernels.lockfile`.
 	uv pip install "kernels==0.5.0"
+	uv pip install -r requirements_ascend.txt
+	uv pip install --no-build-isolation -e .
 
 export-requirements:
 	uv pip compile pyproject.toml --extra gen -o requirements_gen.txt --python-version 3.11
 	uv pip compile pyproject.toml --extra bnb --extra accelerate --extra compressed-tensors --extra quantize --extra peft --extra outlines -o requirements_cuda.txt --python-version 3.11
 	uv pip compile pyproject.toml --extra accelerate --extra compressed-tensors --extra quantize --extra peft --extra outlines -o requirements_intel.txt --python-version 3.11
 	uv pip compile pyproject.toml --extra accelerate --extra compressed-tensors --extra quantize --extra peft --extra outlines -o requirements_rocm.txt --python-version 3.11
-	uv pip compile pyproject.toml --extra accelerate --extra compressed-tensors --extra quantize --extra peft --extra outlines -o requirements_ascend.txt --python-version 3.11
+	uv pip compile pyproject.toml --extra accelerate --extra compressed-tensors --extra quantize --extra peft --extra outlines -o requirements_ascend.txt --python-version 3.12 --override requirements_ascend_overrides.txt
+	# Drop the torch family from the compiled file: on NPU the torch stack is
+	# provided by torch_npu (Ascend wheel index), and the CUDA wheels have no
+	# aarch64 builds. See requirements_ascend_overrides.txt for the anchor pins.
+	grep -vE '^(torch|torchvision|triton|nvidia-|setuptools)' requirements_ascend.txt > requirements_ascend.tmp && mv requirements_ascend.tmp requirements_ascend.txt
