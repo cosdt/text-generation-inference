@@ -81,6 +81,11 @@ if ! [[ "$NUM_SHARD" =~ ^[0-9]+$ ]] || [[ "$NUM_SHARD" -lt 1 ]]; then
     echo "invalid --num-shard: $NUM_SHARD" >&2; exit 1
 fi
 
+# Trim trailing whitespace/newlines from MODEL_ID: a path pasted with a
+# stray newline would otherwise miss the local-dir check below and break
+# the snapshot_download python one-liner (unterminated string literal).
+MODEL_ID="${MODEL_ID%"${MODEL_ID##*[![:space:]]}"}"
+
 # ---------- model: download via ModelScope if it's not a local path ----------
 if [[ ! -d "$MODEL_ID" ]]; then
     if ! python -c "import modelscope" >/dev/null 2>&1; then
@@ -90,6 +95,10 @@ if [[ ! -d "$MODEL_ID" ]]; then
     fi
     echo "[MODEL] downloading '$MODEL_ID' via ModelScope (cached in ~/.cache/modelscope)..."
     MODEL_ID=$(python -c "from modelscope import snapshot_download; print(snapshot_download('$MODEL_ID'))" | tail -n 1)
+    if [[ -z "$MODEL_ID" ]]; then
+        echo "[MODEL] model download failed (empty path); check the error above" >&2
+        exit 1
+    fi
     echo "[MODEL] model path: $MODEL_ID"
 fi
 
