@@ -4,21 +4,23 @@
 # Usage: ./start-tgi.sh [options] [-- extra launcher args...]
 #
 # Options:
-#   --model-id PATH         model directory or HF id (default: /shared/models/Qwen3-0.6B)
+#   --model-id PATH|ID      local model dir, HF id or ModelScope id
+#                           (default: Qwen/Qwen3-0.6B, downloaded via ModelScope
+#                           on first use and cached in ~/.cache/modelscope)
 #   --num-shard N           tensor parallelism degree (default: 2; 1 = single card)
-#   --devices LIST          ASCEND_VISIBLE_DEVICES, e.g. "2,3" (default: "2,3")
+#   --devices LIST          ASCEND_VISIBLE_DEVICES, e.g. "0,1" (default: "0,1")
 #                           note: len(LIST) should be >= --num-shard
-#   --port N                HTTP port (default: 3000)
+#   --port N                HTTP port (default: 8080)
 #   --max-total-tokens N    (default: 128)
 #   --max-input-tokens N    (default: 100)
 #   --log FILE              log file (default: /tmp/tgi.log)
 #   -h|--help               show this help
 #
 # Examples:
-#   ./start-tgi.sh                                      # 2 shards on NPU 2,3
-#   ./start-tgi.sh --num-shard 4 --devices 2,3,6,7      # 4 shards
+#   ./start-tgi.sh                                      # 2 shards on NPU 0,1
+#   ./start-tgi.sh --num-shard 4 --devices 0,1,2,3      # 4 shards
 #   ./start-tgi.sh --num-shard 1                        # single card
-#   ./start-tgi.sh --model-id /shared/models/Qwen3-0.6B -- --json-output
+#   ./start-tgi.sh --model-id /path/to/model -- --json-output
 #
 # Stop with: ./stop-tgi.sh
 set -e
@@ -26,11 +28,29 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# ---------- conda env (optional, same discovery as run-npu.sh) ----------
+if [[ -n "${TGI_CONDA_ENV:-}" ]]; then
+    if command -v conda >/dev/null 2>&1; then
+        CONDA_BASE="$(conda info --base 2>/dev/null || true)"
+    elif [[ -n "${CONDA_EXE:-}" ]]; then
+        CONDA_BASE="$(dirname "$(dirname "$CONDA_EXE")")"
+    else
+        echo "TGI_CONDA_ENV is set but conda is not available in this shell" >&2
+        exit 1
+    fi
+    if [[ -z "$CONDA_BASE" || ! -f "$CONDA_BASE/etc/profile.d/conda.sh" ]]; then
+        echo "cannot locate conda base environment" >&2
+        exit 1
+    fi
+    source "$CONDA_BASE/etc/profile.d/conda.sh"
+    conda activate "$TGI_CONDA_ENV"
+fi
+
 # ---------- defaults ----------
-MODEL_ID="/shared/models/Qwen3-0.6B"
+MODEL_ID="Qwen/Qwen3-0.6B"
 NUM_SHARD=2
-DEVICES="2,3"
-PORT=3000
+DEVICES="0,1"
+PORT=8080
 MAX_TOTAL_TOKENS=128
 MAX_INPUT_TOKENS=100
 LOG_FILE="/tmp/tgi.log"
@@ -38,7 +58,7 @@ PID_FILE="/tmp/tgi.pid"
 EXTRA_ARGS=()
 
 usage() {
-    sed -n '2,20p' "$0"
+    sed -n '2,25p' "$0"
 }
 
 # ---------- parse args ----------
@@ -59,6 +79,18 @@ done
 
 if ! [[ "$NUM_SHARD" =~ ^[0-9]+$ ]] || [[ "$NUM_SHARD" -lt 1 ]]; then
     echo "invalid --num-shard: $NUM_SHARD" >&2; exit 1
+fi
+
+# ---------- model: download via ModelScope if it's not a local path ----------
+if [[ ! -d "$MODEL_ID" ]]; then
+    if ! python -c "import modelscope" >/dev/null 2>&1; then
+        echo "[MODEL] installing modelscope (one-time, may take a few minutes)..."
+        if command -v uv >/dev/null 2>&1; then uv pip install "modelscope>=1.37.0"
+        else python -m pip install "modelscope>=1.37.0"; fi
+    fi
+    echo "[MODEL] downloading '$MODEL_ID' via ModelScope (cached in ~/.cache/modelscope)..."
+    MODEL_ID=$(python -c "from modelscope import snapshot_download; print(snapshot_download('$MODEL_ID'))" | tail -n 1)
+    echo "[MODEL] model path: $MODEL_ID"
 fi
 
 # ---------- already running? ----------
