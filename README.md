@@ -74,7 +74,7 @@ Text Generation Inference (TGI) is a toolkit for deploying and serving Large Lan
 - [Inferentia](https://github.com/huggingface/optimum-neuron/tree/main/text-generation-inference)
 - [Intel GPU](https://github.com/huggingface/text-generation-inference/pull/1475)
 - [Gaudi](https://github.com/huggingface/tgi-gaudi)
-- [Ascend](docs/npu/quick-start.md) (NPU, in this fork)
+- [Huawei Ascend](docs/npu/quick-start.md) (NPU, in this fork)
 - [Google TPU](https://huggingface.co/docs/optimum-tpu/howto/serving)
 
 
@@ -129,7 +129,7 @@ curl localhost:8080/v1/chat/completions \
 
 **Note:** TGI supports AMD Instinct MI210 and MI250 GPUs. Details can be found in the [Supported Hardware documentation](https://huggingface.co/docs/text-generation-inference/installation_amd#using-tgi-with-amd-gpus). To use AMD GPUs, please use `docker run --device /dev/kfd --device /dev/dri --shm-size 1g -p 8080:80 -v $volume:/data ghcr.io/huggingface/text-generation-inference:3.3.5-rocm --model-id $model` instead of the command above.
 
-**Note:** TGI supports Ascend NPUs (Atlas 900 A2 / 910B) in this fork. Details can be found in the [Ascend NPU quick start](docs/npu/quick-start.md). Build the image with `docker build -f Dockerfile_ascend -t tgi-ascend .` on an aarch64 Ascend machine, then use `docker run --device /dev/davinci0 --device /dev/davinci1 --device /dev/davinci_manager --device /dev/devmm_svm --device /dev/hisi_hdc --shm-size 64g -p 8080:80 -v $volume:/data tgi-ascend --model-id $model` instead of the command above.
+**Note:** TGI supports Huawei Ascend NPUs (Atlas 900 A2 / 910B) in this fork. Details can be found in the [Huawei Ascend NPU quick start](docs/npu/quick-start.md). Build the image with `docker build -f Dockerfile_ascend -t tgi-ascend .` on an aarch64 Huawei Ascend machine, then use `docker run --device /dev/davinci0 --device /dev/davinci1 --device /dev/davinci_manager --device /dev/devmm_svm --device /dev/hisi_hdc --shm-size 64g -p 8080:80 -v $volume:/data tgi-ascend --model-id $model` instead of the command above.
 
 To see all options to serve your models (in the [code](https://github.com/huggingface/text-generation-inference/blob/main/launcher/src/main.rs) or in the cli):
 ```

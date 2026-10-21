@@ -1,6 +1,6 @@
-# TGI Ascend NPU serving examples
+# TGI Huawei Ascend NPU serving examples
 
-End-to-end serving scenarios on Ascend NPU. Each script starts a real
+End-to-end serving scenarios on Huawei Ascend NPU. Each script starts a real
 TGI service (via the repo-root [`start-tgi.sh`](../../start-tgi.sh)),
 sends requests, asserts the replies, and tears the service down
 ([`stop-tgi.sh`](../../stop-tgi.sh)). Exit code 0 means the scenario
@@ -34,7 +34,7 @@ examples/npu/serve_tensor_parallel.sh --model-id Qwen/Qwen3-0.6B --port 8090
 Env knobs: `PORT` (default 8080), `CI_OUTPUT_DIR` (output dir,
 default `/tmp/tgi-example-out`), `NUM_REQUESTS` (concurrent only).
 
-These scripts are watched by the Ascend docs guard (examples guard
+These scripts are watched by the Huawei Ascend docs guard (examples guard
 engine, `examples_manifest.yaml`); each scenario maps to one manifest
 entry. Add a new scenario by dropping a `.sh` here and classifying it in
 that manifest.
